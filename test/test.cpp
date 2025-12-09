@@ -1,6 +1,5 @@
 #include <fcntl.h>
 #include <gtest/gtest.h>
-#include <tsh.h>
 #include <unistd.h>
 #include <ctime>
 #include <fstream>
@@ -10,8 +9,10 @@
 #include <vector>
 #include <cstring>
 
-using namespace std;
+#include "shell.h"    // NEW: Shell class
+#include "process.h"  // NEW: Process class
 
+using namespace std;
 
 void write_line(const string &filename, const char *msg) {
   std::ofstream outfile(filename);
@@ -66,8 +67,9 @@ void restore_stdin_redirection(RedirectionContext &context,
     remove(filename);  // Cleanup the file
   }
 }
+
 static std::vector<Process*> to_vec(const std::list<Process*>& lst) {
-  return std::vector<Process*>(lst.begin(), lst.end()); // ✅ range ctor
+  return std::vector<Process*>(lst.begin(), lst.end());
 }
 
 static void free_list(std::list<Process*>& lst) {
@@ -76,9 +78,9 @@ static void free_list(std::list<Process*>& lst) {
 }
 
 static void expect_tokens(const Process& p, const std::vector<const char*>& want) {
-  ASSERT_EQ(p.get_size(), want.size()) << "tokens.size() mismatch"; // ✅ public API
+  ASSERT_EQ(p.get_size(), want.size()) << "tokens.size() mismatch";
   for (size_t i = 0; i < want.size(); ++i) {
-    EXPECT_STREQ(p.get_token(i), want[i]) << "token mismatch at index " << i; // ✅ content compare
+    EXPECT_STREQ(p.get_token(i), want[i]) << "token mismatch at index " << i;
   }
 }
 
@@ -91,9 +93,12 @@ static void expect_proc(const Process& p,
 }
 
 TEST(ParseInputTest, SingleCommand) {
+  Shell shell;                    // NEW
   char cmd[] = "ls";
   std::list<Process*> plist;
-  parse_input(cmd, plist);
+  shell.parse_input(cmd);
+  // move parsed processes out of the shell's internal list into our test list
+  plist.splice(plist.end(), shell.process_list);
 
   auto v = to_vec(plist);
   ASSERT_EQ(v.size(), 1u);
@@ -103,9 +108,11 @@ TEST(ParseInputTest, SingleCommand) {
 }
 
 TEST(ParseInputTest, MixedSemicolonAndPipe) {
+  Shell shell;                              // NEW
   char cmd[] = "echo hi|grep h;pwd";
   std::list<Process*> plist;
-  parse_input(cmd, plist);
+  shell.parse_input(cmd);
+  plist.splice(plist.end(), shell.process_list);
 
   auto v = to_vec(plist);
   ASSERT_EQ(v.size(), 3u);
@@ -117,9 +124,11 @@ TEST(ParseInputTest, MixedSemicolonAndPipe) {
 }
 
 TEST(ParseInputTest, EmptyInputProducesNoProcess) {
+  Shell shell;                    // NEW
   char cmd[] = "";
   std::list<Process*> plist;
-  parse_input(cmd, plist);
+  shell.parse_input(cmd);
+  plist.splice(plist.end(), shell.process_list);
 
   auto v = to_vec(plist);
   EXPECT_EQ(v.size(), 0u);
@@ -127,21 +136,22 @@ TEST(ParseInputTest, EmptyInputProducesNoProcess) {
   free_list(plist);
 }
 
-
 // test quit
 TEST(ShellTest, Quit) {
+  Shell shell;            // NEW
   Process p(0, 0);
   p.add_token((char *)"quit");
 
-  EXPECT_TRUE(isQuit(&p)) << "passing quit should return true" << endl;
+  EXPECT_TRUE(shell.isQuit(&p)) << "passing quit should return true" << endl;
 }
 
-// // test exit
+// test not quit
 TEST(ShellTest, NotQuit) {
+  Shell shell;            // NEW
   Process p(0, 0);
   p.add_token((char *)"exit");
 
-  EXPECT_FALSE(isQuit(&p)) << "passing quit should return true" << endl;
+  EXPECT_FALSE(shell.isQuit(&p)) << "passing exit should return false" << endl;
 }
 
 TEST(ShellTest, TestSimpleRun) {
@@ -154,8 +164,8 @@ TEST(ShellTest, TestSimpleRun) {
   testing::internal::CaptureStdout();
   RedirectionContext context = setup_stdin_redirection(filename);
 
-  // run your test
-  run();
+  Shell shell;   // NEW
+  shell.run();   // CHANGED from run()
 
   std::string output = testing::internal::GetCapturedStdout();
   restore_stdin_redirection(context, filename);
@@ -166,21 +176,22 @@ TEST(ShellTest, TestSimpleRun) {
 }
 
 TEST(ParseInputTest, Exactly25TokensAccepted) {
+  Shell shell;  // NEW
+
   // 25 tokens total: echo + 24 args
   char cmd[] =
     "echo a01 a02 a03 a04 a05 a06 a07 a08 a09 a10 "
     "a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24";
 
   std::list<Process*> plist;
-  parse_input(cmd, plist);
+  shell.parse_input(cmd);
+  plist.splice(plist.end(), shell.process_list);
 
   auto v = to_vec(plist);
   ASSERT_EQ(v.size(), 1u) << "should produce exactly one Process";
 
-  // Verify token count == 25
   ASSERT_EQ(v[0]->get_size(), 25) << "should accept exactly 25 tokens";
 
-  // Verify exact tokens and no pipes
   expect_proc(
     *v[0],
     {"echo","a01","a02","a03","a04","a05","a06","a07","a08","a09",
@@ -191,10 +202,6 @@ TEST(ParseInputTest, Exactly25TokensAccepted) {
 
   free_list(plist);
 }
-
-
-
-
 
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
