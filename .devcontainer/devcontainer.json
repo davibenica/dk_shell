@@ -1,0 +1,16 @@
+{
+	"name": "umass-system",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"features": {
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-vscode.cpptools-extension-pack",
+				"meronz.manpages"
+			]
+		}
+	}
+}
