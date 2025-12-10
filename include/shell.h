@@ -9,6 +9,7 @@
 #include "process.h"
 
 #define MAX_LINE 81
+#define PATH_MAX 1024
 
 class Shell {
  public:
@@ -16,10 +17,8 @@ class Shell {
   ~Shell();
 
   void run(); 
-  // Public helpers used by unit tests
-  // parse_input populates the internal `process_list`
   bool isQuit(Process *process) const;
-  // Make internal helpers public so unit tests can call them
+  bool isCd(Process *process) const;
   std::list<Process*> process_list;
 
   void display_prompt() const;
@@ -27,6 +26,7 @@ class Shell {
   char *read_input();
   void sanitize(char *cmd);
   void parse_input(char *input_line);
+  void handle_cd(Process *proc);
   bool run_commands();
 
   void close_pipe(int fd) const;
