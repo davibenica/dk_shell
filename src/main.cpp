@@ -1,11 +1,7 @@
-#include <tsh.h>
+#include "shell.h"
 
-/**
- * @brief the main runner, nothing to do here.
- *
- * @return int
- */
 int main() {
-  run();
-  exit(0);
+    Shell shell;
+    shell.run();
+    return 0;
 }

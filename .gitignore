@@ -1,0 +1,16 @@
+obj/
+*.o
+
+# 
+dk_shell_app
+dk_shell_test
+tsh_app
+tsh_test
+
+dk_shell_test
+
+
+submission.zip
+
+# macOS junk
+.DS_Store
