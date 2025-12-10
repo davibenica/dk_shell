@@ -1,15 +1,16 @@
 obj/
 *.o
-
+server_files/
 # 
 dk_shell_app
 dk_shell_test
+cloud_server
 tsh_app
 tsh_test
 
 dk_shell_test
 
-
+Makefile
 submission.zip
 
 # macOS junk
