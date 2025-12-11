@@ -1,7 +1,6 @@
 #ifndef SIMPLE_SHELL_H
 #define SIMPLE_SHELL_H
 
-#include <list>
 #include <vector>
 #include <iostream>
 #include <sys/types.h>
@@ -16,10 +15,21 @@ class Shell {
   Shell();
   ~Shell();
 
+  public:
+  std::vector<Process*> process_list;
+
+  int server_fd;
+  
   void run(); 
   bool isQuit(Process *process) const;
+  bool isBuiltin(Process *process) const;
+  void handleBuiltin(Process *process);
+  void handleCput(Process *process);
+  void handleCcon(Process *process);
+  void handleCrm(Process *process);
+  void handleCget(Process *process);
+  
   bool isCd(Process *process) const;
-  std::list<Process*> process_list;
 
   void display_prompt() const;
   void cleanup(char *input_line);
@@ -28,7 +38,6 @@ class Shell {
   void parse_input(char *input_line);
   void handle_cd(Process *proc);
   bool run_commands();
-
   void close_pipe(int fd) const;
 };
 
