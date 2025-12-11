@@ -94,7 +94,7 @@ bool Shell::isBuiltin(Process *process) const
     return false;
   }
   std::string cmd(process->cmdTokens[0]);
-  return (cmd == "cput" || cmd == "cget" || cmd == "crm" || cmd == "cls" || cmd == "ccon");
+  return (cmd == "cput" || cmd == "cget" || cmd == "crm" || cmd == "cls" || cmd == "ccon" || cmd == "cdisc");
 }
 
 
@@ -107,17 +107,25 @@ void Shell::handleBuiltin(Process *process) {
       break;
     case 'g':  // cget
       handleCget(process);
-      
       break;
     case 'r':  // crm
       handleCrm(process);
       break;
     case 'l':  // cls
+      handleCls(process);
       break;
     case 'c':
       handleCcon(process);
       break;
-      
+    case 'd':  // cdisc
+      if (server_fd != -1) {
+          close(server_fd);
+          server_fd = -1;
+          std::cout << "Disconnected from server.\n";
+      } else {
+          std::cerr << "Not connected to any server.\n";
+      }
+      break;
     default:
       std::cerr << "Unknown builtin command\n";
       break;
@@ -298,6 +306,36 @@ void Shell::handleCget(Process *process)
   file.close();
   std::cout << "File " << localfile << " downloaded successfully\n";
 
+}
+
+void Shell::handleCls(Process *process)
+{
+  if (server_fd == -1) {
+      std::cerr << "Error: cannot ls file direcotory if not coonected to a server\n";
+      return;
+  }
+  std::string request = std::string(CMD_LIST);
+  if (!send_line(server_fd, request)) {
+      std::cerr << "Error: failed to send LIST request\n";
+      return;
+  }
+  std::string response = read_line(server_fd);
+  std::cout << "Response: " << response << "\n";
+  if (response.empty()) {
+      std::cerr << "Error: no response from server\n";
+      return;
+  }
+  std::vector<std::string> parts = split_string(response, '|');
+  if (parts.size() < 2 || parts[0] != RESP_OK) {
+      std::cerr << "Error: server error: " << response << "\n";
+      return;
+  }
+  std::cout << "Files on server:\n";
+  std::string file_entry = read_line(server_fd);
+  while (!file_entry.empty()) {
+    std::cout << " - " << file_entry << "\n";
+    file_entry = read_line(server_fd); 
+  }
 }
 
 bool Shell::isCd(Process *process) const
