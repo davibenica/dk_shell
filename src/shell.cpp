@@ -15,8 +15,21 @@ Shell::~Shell() {
 }
 
 void Shell::display_prompt() const {
-  std::cout << "$ " << std::flush;
+  char cwd[PATH_MAX];
+
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        std::cout << "$ " << std::flush;
+        return;
+    }
+
+    std::string path(cwd);
+
+    const char* color_start = "\033[1;32m";  //green
+    const char* color_end   = "\033[0m";
+
+    std::cout << color_start << "[" << path << "]" << color_end << " $ " << std::flush;
 }
+
 
 void Shell::close_pipe(int fd) const {
   if (fd != -1) close(fd);
@@ -60,6 +73,12 @@ void Shell::sanitize(char *cmd) {
 bool Shell::isQuit(Process *p) const {
   return p && p->cmdTokens && p->cmdTokens[0]
          && std::strcmp(p->cmdTokens[0], "quit") == 0;
+}
+
+bool Shell::isCd(Process *process) const
+{
+    return process && process->cmdTokens && process->cmdTokens[0]
+           && std::strcmp(process->cmdTokens[0], "cd") == 0;
 }
 
 void Shell::parse_input(char *cmd) {
@@ -142,6 +161,24 @@ void Shell::parse_input(char *cmd) {
   }
 }
 
+void Shell::handle_cd(Process *proc)
+{
+    char *path = (proc->tok_index > 1) ? proc->cmdTokens[1] : nullptr;
+
+  if (!path || std::strcmp(path, "~") == 0) {
+    const char *home = std::getenv("HOME");
+    if (!home) {
+      std::cerr << "cd: HOME not set\n";
+      return;
+    }
+    path = const_cast<char*>(home);
+  }
+
+  if (chdir(path) != 0) {
+    std::perror("cd");
+  }
+}
+
 bool Shell::run_commands() {
   bool is_quit = false;
 
@@ -160,6 +197,10 @@ bool Shell::run_commands() {
     if (isQuit(proc)) {
       is_quit = true;
       break;
+    }
+    if (isCd(proc)) {
+      handle_cd(proc);
+      continue;
     }
 
     if (proc->pipe_out) {
