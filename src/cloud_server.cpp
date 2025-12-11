@@ -9,11 +9,50 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <cstring>
+#include <unordered_map>
+#include <string>
+
 
 #define SERVER_FILES_DIR "./server_files"
 
 // Global pthread mutex for file operations
-pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t file_locks_mutex = PTHREAD_MUTEX_INITIALIZER;
+std::unordered_map<std::string, pthread_mutex_t> file_locks;
+
+/**
+ * @brief Safely gets and a specific file mutex
+ */
+pthread_mutex_t* get_file_mutex(const std::string& filename) {
+    pthread_mutex_lock(&file_locks_mutex);
+
+    auto [it, inserted] = file_locks.emplace(filename, pthread_mutex_t{});
+    if (inserted) {
+        pthread_mutex_init(&it->second, nullptr);
+    }
+
+    pthread_mutex_t* m = &it->second;
+
+    pthread_mutex_unlock(&file_locks_mutex);
+    return m;
+}
+
+/**
+ * @brief Safely destroy and remove a file-specific mutex
+ */
+void delete_file_mutex(const std::string& filename) {
+    pthread_mutex_lock(&file_locks_mutex);
+
+    auto it = file_locks.find(filename);
+    if (it != file_locks.end()) {
+        // Destroy mutex
+        pthread_mutex_destroy(&it->second);
+
+        // Remove from map
+        file_locks.erase(it);
+    }
+
+    pthread_mutex_unlock(&file_locks_mutex);
+}
 
 /**
  * @brief Ensure server files directory exists
@@ -36,11 +75,10 @@ std::string get_file_path(const std::string& filename) {
  * @brief Handle LIST command
  */
 void handle_list(int client_fd) {
-    pthread_mutex_lock(&file_mutex);
     
     DIR* dir = opendir(SERVER_FILES_DIR);
     if (!dir) {
-        pthread_mutex_unlock(&file_mutex);
+        
         send_line(client_fd, std::string(RESP_ERROR) + "|Failed to open directory");
         return;
     }
@@ -61,7 +99,6 @@ void handle_list(int client_fd) {
     
     closedir(dir);
     
-    pthread_mutex_unlock(&file_mutex);
 }
 
 /**
@@ -74,22 +111,24 @@ void handle_upload(int client_fd, const std::string& filename, size_t filesize) 
         send_line(client_fd, std::string(RESP_ERROR) + "|Failed to receive file data");
         return;
     }
+
     
-    pthread_mutex_lock(&file_mutex);
+    pthread_mutex_t *file_mutex = get_file_mutex(filename);
+    pthread_mutex_lock(file_mutex);
+
     
     std::string filepath = get_file_path(filename);
     std::ofstream file(filepath, std::ios::binary);
     if (!file.is_open()) {
-        pthread_mutex_unlock(&file_mutex);  
+        pthread_mutex_unlock(file_mutex);  
         send_line(client_fd, std::string(RESP_ERROR) + "|Failed to create file");
         return;
     }
     
     file.write(buffer.data(), filesize);
     file.close();
-    
-  
-    pthread_mutex_unlock(&file_mutex);
+
+    pthread_mutex_unlock(file_mutex);
     
     send_line(client_fd, std::string(RESP_OK) + "|File uploaded successfully");
     std::cout << "Uploaded: " << filename << " (" << filesize << " bytes)\n";
@@ -99,15 +138,20 @@ void handle_upload(int client_fd, const std::string& filename, size_t filesize) 
  * @brief Handle DOWNLOAD command
  */
 void handle_download(int client_fd, const std::string& filename) {
-    
-    pthread_mutex_lock(&file_mutex);
-    
     std::string filepath = get_file_path(filename);
+    std::ifstream check(filepath, std::ios::binary);
+    if (!check.is_open()) {
+        send_line(client_fd, std::string(RESP_ERROR) + "|File not found");
+        return;
+    }
+
+    pthread_mutex_t *file_mutex = get_file_mutex(filename);
+    pthread_mutex_lock(file_mutex);
     
-    // Open file
+    
     std::ifstream file(filepath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        pthread_mutex_unlock(&file_mutex);  // MUST unlock before return!
+        pthread_mutex_unlock(file_mutex);  
         send_line(client_fd, std::string(RESP_ERROR) + "|File not found");
         return;
     }
@@ -115,20 +159,17 @@ void handle_download(int client_fd, const std::string& filename) {
     size_t filesize = file.tellg();
     file.seekg(0, std::ios::beg);
     
-    // Read data
     std::vector<char> buffer(filesize);
     if (!file.read(buffer.data(), filesize)) {
         file.close();
-        pthread_mutex_unlock(&file_mutex);  
+        pthread_mutex_unlock(file_mutex);  
         send_line(client_fd, std::string(RESP_ERROR) + "|Failed to read file");
         return;
     }
     file.close();
     
-    // Unlock after reading (before sending to client)
-    pthread_mutex_unlock(&file_mutex);
+    pthread_mutex_unlock(file_mutex);
     
-    // Send response 
     std::string response = std::string(RESP_OK) + "|" + std::string(RESP_DATA) + "|" + std::to_string(filesize);
     if (!send_line(client_fd, response)) {
         return;
@@ -147,19 +188,25 @@ void handle_download(int client_fd, const std::string& filename) {
  */
 void handle_delete(int client_fd, const std::string& filename) {
     
-    pthread_mutex_lock(&file_mutex);
+    if (file_locks.find(filename) == file_locks.end()) {
+        send_line(client_fd, std::string(RESP_ERROR) + "|File not found");
+        return;
+    }
+    pthread_mutex_t *file_mutex = get_file_mutex(filename);
+    pthread_mutex_lock(file_mutex);
     
     std::string filepath = get_file_path(filename);
     
     if (unlink(filepath.c_str()) != 0) {
-        pthread_mutex_unlock(&file_mutex);  
+        pthread_mutex_unlock(file_mutex);  
         send_line(client_fd, std::string(RESP_ERROR) + "|Failed to delete file");
         return;
     }
     
     
-    pthread_mutex_unlock(&file_mutex);
-    
+    pthread_mutex_unlock(file_mutex);
+    delete_file_mutex(filename);
+
     send_line(client_fd, std::string(RESP_OK) + "|File deleted successfully");
     std::cout << "Deleted: " << filename << "\n";
 }
@@ -304,7 +351,12 @@ int main(int argc, char* argv[]) {
     
     close(server_fd);
     
-    pthread_mutex_destroy(&file_mutex);
-    
+    pthread_mutex_lock(&file_locks_mutex);
+    for (auto& pair : file_locks) {
+        pthread_mutex_destroy(&pair.second);
+    }
+    file_locks.clear();
+    pthread_mutex_unlock(&file_locks_mutex);
+    pthread_mutex_destroy(&file_locks_mutex);
     return 0;
 }
