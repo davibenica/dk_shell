@@ -25,6 +25,10 @@ class Shell {
   bool isBuiltin(Process *process) const;
   void handleBuiltin(Process *process);
   void handleCput(Process *process);
+  void handleCcon(Process *process);
+  void handleCrm(Process *process);
+  void handleCget(Process *process);
+  
   bool isCd(Process *process) const;
 
   void display_prompt() const;

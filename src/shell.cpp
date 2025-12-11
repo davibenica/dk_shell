@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 
 #include <fstream>
@@ -91,7 +94,7 @@ bool Shell::isBuiltin(Process *process) const
     return false;
   }
   std::string cmd(process->cmdTokens[0]);
-  return (cmd == "cput" || cmd == "cget" || cmd == "crm" || cmd == "cls");
+  return (cmd == "cput" || cmd == "cget" || cmd == "crm" || cmd == "cls" || cmd == "ccon");
 }
 
 
@@ -103,20 +106,18 @@ void Shell::handleBuiltin(Process *process) {
       // Implement file upload logic here
       break;
     case 'g':  // cget
-      if (process->tok_index < 3) {
-        std::cerr << "Usage: cget <remote_file> <local_file>\n";
-        return;
-      }
-      // Implement file download logic here
+      handleCget(process);
+      
       break;
     case 'r':  // crm
-      if (process->tok_index < 2) {
-        std::cerr << "Usage: crm <remote_file>\n";
-        return;
-      }
+      handleCrm(process);
       break;
     case 'l':  // cls
       break;
+    case 'c':
+      handleCcon(process);
+      break;
+      
     default:
       std::cerr << "Unknown builtin command\n";
       break;
@@ -185,6 +186,119 @@ void Shell::handleCput(Process *process) {
     std::cout << "Server response: " << response << "\n";
 }
 
+void Shell::handleCcon(Process *process)
+{
+  if (process->tok_index < 3) {
+    std::cerr << "Usage: ccon <server_ip> <server_port>\n";
+    return;
+  }
+  if (server_fd != -1) {
+    std::cerr << "Already connected to a server. Disconnect first.\n";
+    return;
+  }
+
+  std::string server_ip = process->cmdTokens[1];
+  int server_port = std::atoi(process->cmdTokens[2]);
+  server_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_fd < 0) {
+    std::perror("Socket creation failed");
+    server_fd = -1;
+    return;
+  }
+  struct sockaddr_in server_addr;
+  std::memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_port = htons(server_port);
+  if (inet_pton(AF_INET, server_ip.c_str(), &server_addr.sin_addr) <= 0) {
+    std::cerr << "Invalid server IP address\n";
+    close(server_fd);
+    server_fd = -1;
+    return;
+  }
+  if (connect(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    std::perror("Connection failed");
+    close(server_fd);
+    server_fd = -1;
+    return;
+  }
+  std::cout << "Connected to server " << server_ip << " on port " << server_port << "\n";
+}
+
+void Shell::handleCrm(Process *process)
+{
+  if (process->tok_index < 2) {
+    std::cerr << "Usage: crm <remote_file>\n";
+    return;
+  }
+
+  if (server_fd == -1) {
+    std::cerr << "Error: not connected to server.\n";
+    return;
+  }
+
+  std::string remotefile = process->cmdTokens[1];
+  std::string request = std::string(CMD_DELETE) + "|" + remotefile;
+  if (!send_line(server_fd, request)) {
+    std::cerr << "Error: failed to send DELETE request\n";
+    return;
+  }
+  std::string response = read_line(server_fd);
+  if (response.empty()) {
+    std::cerr << "Error: no response from server\n";
+    return;
+  }
+  std::cout << "Server response: " << response << "\n";
+}
+
+void Shell::handleCget(Process *process)
+{
+  if (process->tok_index < 3) {
+    std::cerr << "Usage: cget <remote_file> <local_file>\n";
+      return;
+  }
+  if (server_fd == -1) {
+    std::cerr << "Error: not connected to server.\n";
+    return;
+  }
+  std::string remotefile  = process->cmdTokens[1];
+  std::string localfile = process->cmdTokens[2];
+  std::string request = std::string(CMD_DOWNLOAD) + "|" + remotefile;
+  if (!send_line(server_fd, request)) {
+    std::cerr << "Error: failed to send DOWNLOAD request\n";
+    return;
+  }
+  std::string response = read_line(server_fd);
+  if (response.empty()) {
+    std::cerr << "Error: no response from server\n";
+    return;
+  }
+  std::vector<std::string> parts = split_string(response, '|');
+  if (parts.size() < 2 || parts[0] != RESP_OK) {
+    std::cerr << "Error: server error: " << response << "\n";
+    return;
+  }
+  size_t filesize = std::stoull(parts[2]);
+  std::vector<char> filedata(filesize);
+  size_t total_received = 0;
+  while (total_received < filesize) {
+    ssize_t n = recv(server_fd, filedata.data() + total_received, filesize - total_received, 0);
+    if (n <= 0) {
+      std::cerr << "Error: failed to receive file data\n";
+      return;
+    }
+    total_received += n;
+  }
+
+  std::ofstream file(localfile, std::ios::binary);
+  if (!file.is_open()) {
+    std::cerr << "Error: cannot open file " << localfile << " for writing\n";
+    return; 
+  }
+  file.write(filedata.data(), filesize);
+  file.close();
+  std::cout << "File " << localfile << " downloaded successfully\n";
+
+}
 
 bool Shell::isCd(Process *process) const
 {
