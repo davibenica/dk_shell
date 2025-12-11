@@ -97,8 +97,11 @@ TEST(ParseInputTest, SingleCommand) {
   char cmd[] = "ls";
   std::list<Process*> plist;
   shell.parse_input(cmd);
-  // move parsed processes out of the shell's internal list into our test list
-  plist.splice(plist.end(), shell.process_list);
+  // move parsed processes out of the shell's internal vector into our test list
+  for (auto* p : shell.process_list) {
+    plist.push_back(p);
+  }
+  shell.process_list.clear();
 
   auto v = to_vec(plist);
   ASSERT_EQ(v.size(), 1u);
@@ -112,7 +115,10 @@ TEST(ParseInputTest, MixedSemicolonAndPipe) {
   char cmd[] = "echo hi|grep h;pwd";
   std::list<Process*> plist;
   shell.parse_input(cmd);
-  plist.splice(plist.end(), shell.process_list);
+  for (auto* p : shell.process_list) {
+    plist.push_back(p);
+  }
+  shell.process_list.clear();
 
   auto v = to_vec(plist);
   ASSERT_EQ(v.size(), 3u);
@@ -128,7 +134,10 @@ TEST(ParseInputTest, EmptyInputProducesNoProcess) {
   char cmd[] = "";
   std::list<Process*> plist;
   shell.parse_input(cmd);
-  plist.splice(plist.end(), shell.process_list);
+  for (auto* p : shell.process_list) {
+    plist.push_back(p);
+  }
+  shell.process_list.clear();
 
   auto v = to_vec(plist);
   EXPECT_EQ(v.size(), 0u);
@@ -185,7 +194,10 @@ TEST(ParseInputTest, Exactly25TokensAccepted) {
 
   std::list<Process*> plist;
   shell.parse_input(cmd);
-  plist.splice(plist.end(), shell.process_list);
+  for (auto* p : shell.process_list) {
+    plist.push_back(p);
+  }
+  shell.process_list.clear();
 
   auto v = to_vec(plist);
   ASSERT_EQ(v.size(), 1u) << "should produce exactly one Process";
