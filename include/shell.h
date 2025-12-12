@@ -28,7 +28,8 @@ class Shell {
   void handleCcon(Process *process);
   void handleCrm(Process *process);
   void handleCget(Process *process);
-  
+  void handleCls(Process *process);
+   
   bool isCd(Process *process) const;
 
   void display_prompt() const;
