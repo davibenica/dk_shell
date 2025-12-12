@@ -49,6 +49,7 @@ class Worker(threading.Thread):
         self.all_payloads = all_payloads  
         self.errors = errors
         self.lock = lock
+        self.delete_prefix = f"{self.filename}.tmp.t{self.idx}"
 
     def run(self):
         try:
@@ -101,6 +102,18 @@ class Worker(threading.Thread):
                         )
                         self.errors.append(f"    First 32 bytes: {data[:32]!r}")
 
+                files = self.request_file_list(
+                    sock, i, f"checking presence of {self.filename}"
+                )
+                if files is not None and self.filename not in files:
+                    with self.lock:
+                        self.errors.append(
+                            f"[THREAD {self.idx}] Iter {i}: LIST missing "
+                            f"expected file {self.filename}"
+                        )
+
+                self.exercise_delete_endpoint(sock, my_payload, i)
+
                 time.sleep(random.uniform(0.0, 0.01))
 
             except Exception as e:
@@ -111,6 +124,79 @@ class Worker(threading.Thread):
 
         sock.close()
 
+    def request_file_list(self, sock, iteration, context):
+        try:
+            send_line(sock, "LIST")
+            header = read_line(sock)
+        except Exception as exc:
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: LIST failed during {context}: {exc}"
+                )
+            return None
+
+        if not header:
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: LIST empty/EOF response during {context}"
+                )
+            return None
+
+        if not header.startswith("OK|"):
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: LIST bad header "
+                    f"during {context}: {header}"
+                )
+            return None
+
+        files = []
+        while True:
+            entry = read_line(sock)
+            if entry == "":
+                break
+            files.append(entry)
+        return files
+
+    def exercise_delete_endpoint(self, sock, payload, iteration):
+        tmp_name = f"{self.delete_prefix}.{iteration}"
+        send_line(sock, f"UPLOAD|{tmp_name}|{len(payload)}")
+        send_all(sock, payload)
+        resp = read_line(sock)
+        if not resp or not resp.startswith("OK|"):
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: DELETE prep upload failed: {resp}"
+                )
+            return
+
+        files = self.request_file_list(
+            sock, iteration, f"verifying presence of {tmp_name}"
+        )
+        if files is not None and tmp_name not in files:
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: LIST missing delete target {tmp_name}"
+                )
+
+        send_line(sock, f"DELETE|{tmp_name}")
+        resp = read_line(sock)
+        if resp != "OK|File deleted successfully":
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: DELETE failed "
+                    f"for {tmp_name}: {resp}"
+                )
+            return
+
+        send_line(sock, f"DOWNLOAD|{tmp_name}")
+        resp = read_line(sock)
+        if not resp or not resp.startswith("ERROR|"):
+            with self.lock:
+                self.errors.append(
+                    f"[THREAD {self.idx}] Iter {iteration}: DOWNLOAD after DELETE "
+                    f"returned unexpected response: {resp}"
+                )
 
 
 def main():
@@ -172,11 +258,6 @@ def main():
         sys.exit(1)
     else:
         print("\nNo data corruption detected in this run.")
-        print(
-            "Note: This does NOT prove perfect thread-safety, "
-            "but it’s a strong sanity check."
-        )
-
 
 if __name__ == "__main__":
     main()
